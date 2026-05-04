@@ -7,8 +7,8 @@
 // CONSTANTS
 // ────────────────────────────────────────────
 const CONFIG = {
-    CANVAS_WIDTH: 900,
-    CANVAS_HEIGHT: 600,
+    CANVAS_WIDTH: 1200,
+    CANVAS_HEIGHT: 720,
     MAX_UNDO_STEPS: 30,
     TOAST_ERROR_DURATION: 3000,
     TOAST_SUCCESS_DURATION: 2000,
@@ -34,13 +34,24 @@ const CONFIG = {
 const socket = io();
 let mySid = null;
 let isHost = false;
+let hasJoinedGame = false;
 let currentPhase = null;
 let revealedBranchIndex = 0;
 let revealedBranches = [];
 let totalBranches = 0;
+let lobbyTimerSeconds = 180;
+let phraseSubmitted = false;
+let drawingSubmitted = false;
+let guessSubmitted = false;
+let queuedPhaseChange = null;
+let phaseTimerId = null;
+let phaseEndsAt = 0;
+let revealProgressTimerId = null;
+let revealVisibleCount = 0;
 
 // Canvas variables
 let canvas, ctx;
+let strokeCanvas, strokeCtx, strokeBaseImageData;
 let drawing = false;
 let lastX = 0, lastY = 0;
 let currentColor = "#000000";
@@ -133,6 +144,111 @@ function playButtonSound() {
     }
 }
 
+function formatTimer(seconds) {
+    const safeSeconds = Math.max(0, Number(seconds) || 0);
+    const minutes = Math.floor(safeSeconds / 60);
+    const remainder = safeSeconds % 60;
+    return `${minutes}:${String(remainder).padStart(2, '0')}`;
+}
+
+function ensureLobbyTimerControls() {
+    const lobbyBody = document.querySelector('#lobby-screen .card-body');
+    const startBtn = document.getElementById('start-btn');
+    if (!lobbyBody || !startBtn || document.getElementById('timer-settings')) return;
+
+    const timerSettings = document.createElement('div');
+    timerSettings.id = 'timer-settings';
+    timerSettings.className = 'timer-settings';
+    timerSettings.innerHTML = `
+        <label class="timer-label" for="timer-minutes-input">Таймер раунда</label>
+        <div class="timer-control-row">
+            <input id="timer-minutes-input" class="input-styled timer-input" type="number" min="0" max="30" step="1" value="3">
+            <span class="timer-unit">мин</span>
+        </div>
+    `;
+
+    lobbyBody.insertBefore(timerSettings, startBtn);
+
+    const timerInput = document.getElementById('timer-minutes-input');
+    if (timerInput) {
+        timerInput.addEventListener('change', () => {
+            const minutes = Math.max(0, Math.min(Number(timerInput.value) || 0, 30));
+            timerInput.value = String(minutes);
+            socket.emit('host_set_timer', { timer_seconds: minutes * 60 });
+        });
+    }
+}
+
+function updateLobbyTimerControls(data) {
+    lobbyTimerSeconds = Number(data.timer_seconds ?? lobbyTimerSeconds) || 0;
+    ensureLobbyTimerControls();
+
+    const timerSettings = document.getElementById('timer-settings');
+    const timerInput = document.getElementById('timer-minutes-input');
+    if (timerSettings) timerSettings.style.display = isHost ? 'flex' : 'none';
+    if (timerInput && document.activeElement !== timerInput) {
+        timerInput.value = String(Math.round(lobbyTimerSeconds / 60));
+    }
+}
+
+function stopPhaseTimer() {
+    if (phaseTimerId) {
+        clearInterval(phaseTimerId);
+        phaseTimerId = null;
+    }
+    const timerElement = document.getElementById('phase-timer');
+    if (timerElement) {
+        timerElement.style.display = 'none';
+        timerElement.classList.remove('timer-warning');
+    }
+    phaseEndsAt = 0;
+}
+
+function startPhaseTimer(seconds, onExpire) {
+    stopPhaseTimer();
+    const timerSeconds = Number(seconds) || 0;
+    let timerElement = document.getElementById('phase-timer');
+    const activeBody = document.querySelector('.screen.active .card-body');
+    if (timerElement && activeBody && !activeBody.contains(timerElement)) {
+        activeBody.insertBefore(timerElement, activeBody.firstChild?.nextSibling || activeBody.firstChild);
+    }
+    if (!timerElement) {
+        if (activeBody) {
+            timerElement = document.createElement('div');
+            timerElement.id = 'phase-timer';
+            timerElement.className = 'phase-timer';
+            activeBody.insertBefore(timerElement, activeBody.firstChild?.nextSibling || activeBody.firstChild);
+        }
+    }
+    if (!timerElement || timerSeconds <= 0) {
+        if (timerElement) timerElement.style.display = 'none';
+        return;
+    }
+
+    phaseEndsAt = Date.now() + timerSeconds * 1000;
+    timerElement.style.display = 'inline-flex';
+
+    const update = () => {
+        const remaining = Math.max(0, Math.ceil((phaseEndsAt - Date.now()) / 1000));
+        timerElement.textContent = `⏱ ${formatTimer(remaining)}`;
+        timerElement.classList.toggle('timer-warning', remaining <= 10);
+        if (remaining <= 0) {
+            stopPhaseTimer();
+            onExpire();
+        }
+    };
+
+    update();
+    phaseTimerId = setInterval(update, 250);
+}
+
+function stopRevealProgression() {
+    if (revealProgressTimerId) {
+        clearInterval(revealProgressTimerId);
+        revealProgressTimerId = null;
+    }
+}
+
 // ────────────────────────────────────────────
 // ОБНОВЛЕНИЕ ЛОББИ
 // ────────────────────────────────────────────
@@ -186,6 +302,7 @@ function updateRevealUI() {
     const spectatorWait = document.getElementById('spectator-wait');
 
     if (!branchCounter || !revealSteps) return;
+    stopRevealProgression();
 
     if (revealedBranchIndex >= totalBranches) {
         branchCounter.textContent = '🎉 Игра завершена! 🎉';
@@ -206,26 +323,46 @@ function updateRevealUI() {
     const branch = revealedBranches[revealedBranchIndex];
     if (!branch) return;
 
-    let html = '';
+    revealVisibleCount = 1;
 
-    branch.chain.forEach((step, i) => {
-        const content = step.type === 'text'
-            ? `<div class="content-text" style="font-size: 1.1em; padding: 10px; background: linear-gradient(135deg, #faf5ff, #fff); border-radius: 20px;">📝 ${escapeHtml(step.content)}</div>`
-            : `<img src="${step.content}" alt="Рисунок" loading="lazy" style="max-width: 100%; border-radius: 16px;">`;
+    const renderVisibleSteps = () => {
+        const shownSteps = branch.chain.slice(0, revealVisibleCount);
+        let html = '';
 
-        html += `
-            <div class="reveal-step animate-slide-up" style="animation-delay: ${i * 0.1}s">
-                <div class="nick">🎨 ${escapeHtml(step.author_nick)}</div>
-                <div class="content">${content}</div>
-            </div>
-        `;
-        if (i < branch.chain.length - 1) {
-            html += `<div class="reveal-arrow">👇</div>`;
+        shownSteps.forEach((step, i) => {
+            const content = step.type === 'text'
+                ? `<div class="content-text">📝 ${escapeHtml(step.content)}</div>`
+                : `<img src="${step.content}" alt="Рисунок" loading="lazy">`;
+
+            html += `
+                <div class="reveal-step animate-slide-up">
+                    <div class="nick">🎨 ${escapeHtml(step.author_nick)}</div>
+                    <div class="content">${content}</div>
+                </div>
+            `;
+            if (i < shownSteps.length - 1) {
+                html += `<div class="reveal-arrow">👇</div>`;
+            }
+        });
+
+        revealSteps.innerHTML = html;
+        const lastStep = revealSteps.lastElementChild;
+        if (lastStep?.scrollIntoView) {
+            lastStep.scrollIntoView({ behavior: 'smooth', block: 'end' });
         }
-    });
+    };
 
-    revealSteps.innerHTML = html;
-    if (revealSteps.scrollTo) revealSteps.scrollTo(0, 0);
+    renderVisibleSteps();
+
+    if (branch.chain.length > 1) {
+        revealProgressTimerId = setInterval(() => {
+            revealVisibleCount += 1;
+            renderVisibleSteps();
+            if (revealVisibleCount >= branch.chain.length) {
+                stopRevealProgression();
+            }
+        }, 3000);
+    }
 }
 
 // ────────────────────────────────────────────
@@ -236,6 +373,8 @@ function handleGamePhase(data) {
 
     switch (data.phase) {
         case 'writing':
+            stopPhaseTimer();
+            phraseSubmitted = false;
             showScreen('writing-screen');
             const phraseInput = document.getElementById('phrase-input');
             if (phraseInput) {
@@ -247,9 +386,14 @@ function handleGamePhase(data) {
             if (submitPhraseBtn) submitPhraseBtn.disabled = false;
             const writingStatus = document.getElementById('writing-status');
             if (writingStatus) writingStatus.innerHTML = '✍️ Придумайте интересную фразу...';
+            startPhaseTimer(data.timer_seconds, () => {
+                if (!phraseSubmitted) submitPhrase(true);
+            });
             break;
 
         case 'drawing':
+            drawingSubmitted = false;
+            queuedPhaseChange = null;
             showScreen('drawing-screen');
             const assignment = data.assignments?.[mySid];
             if (assignment) {
@@ -264,9 +408,17 @@ function handleGamePhase(data) {
             if (submitDrawingBtn) submitDrawingBtn.disabled = false;
             const drawingStatus = document.getElementById('drawing-status');
             if (drawingStatus) drawingStatus.innerHTML = '🖌️ Рисуйте!';
+            startPhaseTimer(data.timer_seconds, () => {
+                if (!drawingSubmitted) {
+                    showSuccess('Время вышло, отправляю текущий рисунок.');
+                    submitDrawing(true);
+                }
+            });
             break;
 
         case 'guessing':
+            stopPhaseTimer();
+            guessSubmitted = false;
             showScreen('guessing-screen');
             const guessAssignment = data.assignments?.[mySid];
             if (guessAssignment) {
@@ -289,9 +441,13 @@ function handleGamePhase(data) {
             if (submitGuessBtn) submitGuessBtn.disabled = false;
             const guessingStatus = document.getElementById('guessing-status');
             if (guessingStatus) guessingStatus.innerHTML = '👁️ Что здесь нарисовано?';
+            startPhaseTimer(data.timer_seconds, () => {
+                if (!guessSubmitted) submitGuess(true);
+            });
             break;
 
         case 'lobby':
+            stopPhaseTimer();
             showScreen('lobby-screen');
             const lobbyTitle = document.getElementById('lobby-title');
             const lobbyText = document.getElementById('lobby-text');
@@ -363,61 +519,186 @@ function animateCanvasContainer(animationClass) {
     }
 }
 
+function setupStrokeLayer() {
+    if (!canvas) return;
+
+    strokeCanvas = document.createElement('canvas');
+    strokeCanvas.width = canvas.width;
+    strokeCanvas.height = canvas.height;
+    strokeCtx = strokeCanvas.getContext('2d');
+    strokeCtx.lineCap = 'round';
+    strokeCtx.lineJoin = 'round';
+}
+
+function renderStrokePreview() {
+    if (!ctx || !strokeCanvas || !strokeBaseImageData) return;
+
+    ctx.putImageData(strokeBaseImageData, 0, 0);
+    ctx.save();
+    ctx.globalAlpha = isErasing ? 1 : currentOpacity;
+    ctx.drawImage(strokeCanvas, 0, 0);
+    ctx.restore();
+}
+
 // Draw a continuous stroke with opacity
 function startStroke(x, y) {
-    if (!ctx) return;
+    if (!ctx || !strokeCtx) return;
 
     drawing = true;
     [lastX, lastY] = [x, y];
-    ctx.beginPath();
-    ctx.globalAlpha = isErasing ? 1 : currentOpacity;
-    ctx.strokeStyle = isErasing ? '#FFFFFF' : currentColor;
-    ctx.moveTo(lastX, lastY);
+    strokeBaseImageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+
+    strokeCtx.clearRect(0, 0, strokeCanvas.width, strokeCanvas.height);
+    strokeCtx.globalAlpha = 1;
+    strokeCtx.strokeStyle = isErasing ? '#FFFFFF' : currentColor;
+    strokeCtx.fillStyle = isErasing ? '#FFFFFF' : currentColor;
+    strokeCtx.lineWidth = currentSize;
+    strokeCtx.beginPath();
+    strokeCtx.arc(lastX, lastY, currentSize / 2, 0, Math.PI * 2);
+    strokeCtx.fill();
+    strokeCtx.beginPath();
+    strokeCtx.moveTo(lastX, lastY);
+
+    renderStrokePreview();
 }
 
 function drawStroke(x, y) {
-    if (!drawing || !ctx) return;
+    if (!drawing || !strokeCtx) return;
 
-    ctx.lineTo(x, y);
-    ctx.stroke();
+    strokeCtx.lineTo(x, y);
+    strokeCtx.stroke();
     [lastX, lastY] = [x, y];
+    renderStrokePreview();
 }
 
 function endStroke() {
-    if (!ctx) return;
+    if (!ctx || !drawing) return;
+    renderStrokePreview();
     drawing = false;
-    ctx.closePath();
+    if (strokeCtx) {
+        strokeCtx.closePath();
+        strokeCtx.clearRect(0, 0, strokeCanvas.width, strokeCanvas.height);
+    }
+    strokeBaseImageData = null;
     ctx.globalAlpha = 1;
 }
 
-// Fill canvas with current color
-function fillCanvas() {
-    if (!ctx) return;
-    
-    ctx.globalAlpha = currentOpacity;
-    ctx.fillStyle = currentColor;
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.globalAlpha = 1;
-    
+function updateToolButtons() {
+    const eraserBtn = document.getElementById('eraser-btn');
+    const fillBtn = document.getElementById('fill-canvas-btn');
+
+    if (eraserBtn) eraserBtn.classList.toggle('active', isErasing);
+    if (fillBtn) fillBtn.classList.toggle('active', isFilling);
+    if (eraserBtn) eraserBtn.setAttribute('aria-pressed', String(isErasing));
+    if (fillBtn) fillBtn.setAttribute('aria-pressed', String(isFilling));
+    if (canvas) canvas.style.cursor = isFilling ? 'cell' : 'crosshair';
+}
+
+function getCurrentColorRgb() {
+    const hex = normalizeColorToHex(currentColor);
+    return [
+        parseInt(hex.slice(1, 3), 16),
+        parseInt(hex.slice(3, 5), 16),
+        parseInt(hex.slice(5, 7), 16),
+    ];
+}
+
+function blendFillColor(targetColor) {
+    const source = getCurrentColorRgb();
+    const alpha = isErasing ? 1 : currentOpacity;
+    const inverseAlpha = 1 - alpha;
+    const targetAlpha = targetColor[3] / 255;
+    const outputAlpha = alpha + targetAlpha * inverseAlpha;
+
+    if (outputAlpha === 0) return [source[0], source[1], source[2], 0];
+
+    return [
+        Math.round((source[0] * alpha + targetColor[0] * targetAlpha * inverseAlpha) / outputAlpha),
+        Math.round((source[1] * alpha + targetColor[1] * targetAlpha * inverseAlpha) / outputAlpha),
+        Math.round((source[2] * alpha + targetColor[2] * targetAlpha * inverseAlpha) / outputAlpha),
+        Math.round(outputAlpha * 255),
+    ];
+}
+
+function colorsMatch(data, index, color) {
+    return (
+        data[index] === color[0] &&
+        data[index + 1] === color[1] &&
+        data[index + 2] === color[2] &&
+        data[index + 3] === color[3]
+    );
+}
+
+function colorsClose(data, index, color, tolerance = 48) {
+    return (
+        Math.abs(data[index] - color[0]) <= tolerance &&
+        Math.abs(data[index + 1] - color[1]) <= tolerance &&
+        Math.abs(data[index + 2] - color[2]) <= tolerance &&
+        Math.abs(data[index + 3] - color[3]) <= tolerance
+    );
+}
+
+function paintBucketFill(x, y) {
+    if (!ctx || !canvas) return;
+
+    const startX = Math.floor(x);
+    const startY = Math.floor(y);
+    if (startX < 0 || startY < 0 || startX >= canvas.width || startY >= canvas.height) return;
+
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const data = imageData.data;
+    const startIndex = (startY * canvas.width + startX) * 4;
+    const targetColor = [
+        data[startIndex],
+        data[startIndex + 1],
+        data[startIndex + 2],
+        data[startIndex + 3],
+    ];
+    const fillColor = blendFillColor(targetColor);
+
+    if (colorsClose(data, startIndex, fillColor, 3)) return;
+
     saveToUndo();
-    animateCanvasContainer('animate-shake');
-    showSuccess('Заливка применена! 🪣');
+
+    const visited = new Uint8Array(canvas.width * canvas.height);
+    const stack = [startY * canvas.width + startX];
+    while (stack.length > 0) {
+        const pixelIndex = stack.pop();
+        if (visited[pixelIndex]) continue;
+        visited[pixelIndex] = 1;
+
+        const index = pixelIndex * 4;
+        if (!colorsClose(data, index, targetColor)) continue;
+
+        data[index] = fillColor[0];
+        data[index + 1] = fillColor[1];
+        data[index + 2] = fillColor[2];
+        data[index + 3] = fillColor[3];
+
+        const px = pixelIndex % canvas.width;
+        const py = Math.floor(pixelIndex / canvas.width);
+        if (px + 1 < canvas.width) stack.push(pixelIndex + 1);
+        if (px > 0) stack.push(pixelIndex - 1);
+        if (py + 1 < canvas.height) stack.push(pixelIndex + canvas.width);
+        if (py > 0) stack.push(pixelIndex - canvas.width);
+    }
+
+    ctx.putImageData(imageData, 0, 0);
+}
+
+function toggleFill() {
+    isFilling = !isFilling;
+    if (isFilling) {
+        isErasing = false;
+    }
+    updateToolButtons();
 }
 
 // Toggle eraser
 function toggleEraser() {
     isErasing = !isErasing;
     isFilling = false;
-    
-    const eraserBtn = document.getElementById('eraser-btn');
-    const fillBtn = document.getElementById('fill-canvas-btn');
-    
-    if (eraserBtn) {
-        eraserBtn.classList.toggle('active', isErasing);
-    }
-    if (fillBtn) {
-        fillBtn.classList.remove('active');
-    }
+    updateToolButtons();
     
     if (isErasing) {
         showSuccess('Ластик активирован! 🧽');
@@ -428,20 +709,22 @@ function toggleEraser() {
 function clearCanvasWithConfirm() {
     if (confirm('🗑️ Очистить весь рисунок? Отменить будет нельзя!')) {
         clearCanvas();
-        saveToUndo();
         triggerSuccessAnimation();
     }
 }
 
 function clearCanvas() {
     if (!ctx) return;
+
+    if (undoStack.length === 0 || !isSameAsLastState()) {
+        saveToUndo();
+    }
     
     ctx.fillStyle = '#FFFFFF';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.strokeStyle = currentColor;
     ctx.lineWidth = currentSize;
 
-    saveToUndo();
     animateCanvasContainer('animate-shake');
 }
 
@@ -462,14 +745,14 @@ let eraserButtonAdded = false;
 function addEraserButton() {
     if (eraserButtonAdded) return;
     
-    const buttonGroup = document.querySelector('#drawing-screen .button-group');
-    if (buttonGroup && !document.getElementById('eraser-btn')) {
+    const toolPanel = document.getElementById('tool-panel');
+    if (toolPanel && !document.getElementById('eraser-btn')) {
         const eraserBtn = document.createElement('button');
         eraserBtn.id = 'eraser-btn';
-        eraserBtn.className = 'btn btn-secondary';
+        eraserBtn.className = 'btn btn-secondary tool-action-btn';
         eraserBtn.innerHTML = '🧽 Ластик';
         eraserBtn.onclick = toggleEraser;
-        buttonGroup.insertBefore(eraserBtn, buttonGroup.firstChild);
+        toolPanel.appendChild(eraserBtn);
         eraserButtonAdded = true;
     }
 }
@@ -479,37 +762,47 @@ let undoRedoButtonsAdded = false;
 function addUndoRedoButtons() {
     if (undoRedoButtonsAdded) return;
     
+    const toolPanel = document.getElementById('tool-panel');
     const buttonGroup = document.querySelector('#drawing-screen .button-group');
-    if (buttonGroup) {
+    if (toolPanel) {
         if (!document.getElementById('undo-btn')) {
             const undoBtn = document.createElement('button');
             undoBtn.id = 'undo-btn';
-            undoBtn.className = 'btn btn-secondary';
+            undoBtn.className = 'btn btn-secondary tool-action-btn';
             undoBtn.innerHTML = '↩️ Отменить';
             undoBtn.onclick = undo;
-            buttonGroup.appendChild(undoBtn);
+            toolPanel.appendChild(undoBtn);
         }
 
         if (!document.getElementById('redo-btn')) {
             const redoBtn = document.createElement('button');
             redoBtn.id = 'redo-btn';
-            redoBtn.className = 'btn btn-secondary';
+            redoBtn.className = 'btn btn-secondary tool-action-btn';
             redoBtn.innerHTML = '↪️ Повторить';
             redoBtn.onclick = redo;
-            buttonGroup.appendChild(redoBtn);
+            toolPanel.appendChild(redoBtn);
+        }
+
+        if (!document.getElementById('fill-canvas-btn')) {
+            const fillBtn = document.createElement('button');
+            fillBtn.id = 'fill-canvas-btn';
+            fillBtn.className = 'btn btn-secondary tool-action-btn';
+            fillBtn.innerHTML = '🪣 Заливка';
+            fillBtn.onclick = toggleFill;
+            toolPanel.appendChild(fillBtn);
         }
 
         if (!document.getElementById('clear-canvas-btn')) {
             const newClearBtn = document.createElement('button');
             newClearBtn.id = 'clear-canvas-btn';
-            newClearBtn.className = 'btn btn-secondary';
+            newClearBtn.className = 'btn btn-secondary tool-action-btn';
             newClearBtn.innerHTML = '🗑️ Очистить всё';
             newClearBtn.onclick = clearCanvasWithConfirm;
-            buttonGroup.appendChild(newClearBtn);
+            toolPanel.appendChild(newClearBtn);
         }
 
         // Hide old clear button
-        const oldClearBtn = buttonGroup.querySelector('button[onclick="window.clearCanvas?.()"]');
+        const oldClearBtn = buttonGroup?.querySelector('button[onclick="window.clearCanvas?.()"]');
         if (oldClearBtn) {
             oldClearBtn.style.display = 'none';
         }
@@ -547,6 +840,7 @@ function renderColorPalette() {
 
     const colorPicker = document.createElement('input');
     colorPicker.type = 'color';
+    colorPicker.id = 'color-wheel';
     colorPicker.className = 'color-wheel';
     colorPicker.value = normalizeColorToHex(currentColor);
     colorPicker.oninput = (event) => {
@@ -576,7 +870,7 @@ function normalizeColorToHex(color) {
 // Set drawing color
 function setDrawingColor(color, sourceBtn = null) {
     if (isErasing) toggleEraser();
-    if (isFilling) isFilling = false;
+    updateToolButtons();
     
     currentColor = color;
 
@@ -589,18 +883,66 @@ function setDrawingColor(color, sourceBtn = null) {
         colorPicker.value = normalizeColorToHex(color);
     }
 
-    // Reset fill button active state
-    const fillBtn = document.getElementById('fill-canvas-btn');
-    if (fillBtn) {
-        fillBtn.classList.remove('active');
-    }
+}
+
+function ensureDrawingLayout() {
+    const drawingBody = document.querySelector('#drawing-screen .card-body');
+    const promptBox = document.getElementById('drawing-prompt');
+    const palette = document.getElementById('palette');
+    const brushControls = document.getElementById('brush-controls');
+    const canvasContainer = document.querySelector('#drawing-screen .canvas-container');
+    const buttonGroup = document.querySelector('#drawing-screen .button-group');
+    const drawingStatus = document.getElementById('drawing-status');
+
+    if (!drawingBody || !promptBox || !palette || !brushControls || !canvasContainer || !buttonGroup) return;
+    if (document.querySelector('#drawing-screen .drawing-layout')) return;
+
+    const phaseTimer = document.getElementById('phase-timer') || document.createElement('div');
+    phaseTimer.id = 'phase-timer';
+    phaseTimer.className = 'phase-timer';
+    phaseTimer.style.display = 'none';
+
+    const layout = document.createElement('div');
+    layout.className = 'drawing-layout';
+
+    const toolsPanel = document.createElement('aside');
+    toolsPanel.className = 'drawing-side drawing-tools';
+    toolsPanel.innerHTML = '<div class="side-title">Инструменты</div><div id="tool-panel" class="tool-panel"></div>';
+
+    const mainPanel = document.createElement('main');
+    mainPanel.className = 'drawing-main';
+
+    const colorsPanel = document.createElement('aside');
+    colorsPanel.className = 'drawing-side drawing-colors';
+    colorsPanel.innerHTML = '<div class="side-title">Цвет</div>';
+
+    const bottomBar = document.createElement('div');
+    bottomBar.className = 'drawing-bottom-bar';
+
+    buttonGroup.classList.add('drawing-submit-group');
+    mainPanel.appendChild(canvasContainer);
+    colorsPanel.appendChild(palette);
+    bottomBar.appendChild(brushControls);
+    bottomBar.appendChild(buttonGroup);
+
+    layout.appendChild(toolsPanel);
+    layout.appendChild(mainPanel);
+    layout.appendChild(colorsPanel);
+
+    promptBox.after(phaseTimer);
+    phaseTimer.after(layout);
+    layout.after(bottomBar);
+    if (drawingStatus) bottomBar.after(drawingStatus);
 }
 
 function initCanvas() {
+    ensureDrawingLayout();
     canvas = document.getElementById('draw-canvas');
     if (!canvas) return;
 
     ctx = canvas.getContext('2d');
+    isErasing = false;
+    isFilling = false;
 
     // Set canvas dimensions
     canvas.width = CONFIG.CANVAS_WIDTH;
@@ -620,6 +962,7 @@ function initCanvas() {
     ctx.lineWidth = currentSize;
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
+    setupStrokeLayer();
 
     // Reset undo/redo stacks
     undoStack = [];
@@ -630,6 +973,7 @@ function initCanvas() {
     setupBrushSliders();
     addEraserButton();
     addUndoRedoButtons();
+    updateToolButtons();
 
     setupCanvasEvents();
 }
@@ -686,11 +1030,16 @@ function setupCanvasEvents() {
     // Mouse events
     canvas.onmousedown = (e) => {
         const [x, y] = getCoords(e.clientX, e.clientY);
-        startStroke(x, y);
+        if (isFilling) {
+            paintBucketFill(x, y);
+            return;
+        }
 
         if (undoStack.length === 0 || !isSameAsLastState()) {
             saveToUndo();
         }
+
+        startStroke(x, y);
     };
 
     canvas.onmouseup = () => { endStroke(); };
@@ -707,11 +1056,16 @@ function setupCanvasEvents() {
         e.preventDefault();
         const touch = e.touches[0];
         const [x, y] = getCoords(touch.clientX, touch.clientY);
-        startStroke(x, y);
+        if (isFilling) {
+            paintBucketFill(x, y);
+            return;
+        }
 
         if (undoStack.length === 0 || !isSameAsLastState()) {
             saveToUndo();
         }
+
+        startStroke(x, y);
     };
     canvas.ontouchend = () => { endStroke(); };
     canvas.ontouchmove = (e) => {
@@ -727,10 +1081,11 @@ function setupCanvasEvents() {
 // ────────────────────────────────────────────
 // ОТПРАВКА ДЕЙСТВИЙ
 // ────────────────────────────────────────────
-function submitPhrase() {
+function submitPhrase(isAuto = false) {
     const input = document.getElementById('phrase-input');
     if (!input) return;
-    const text = input.value.trim();
+    if (phraseSubmitted) return;
+    const text = input.value.trim() || (isAuto ? 'Не успел' : '');
     if (!text) {
         showError('Введите фразу! ✍️');
         input.classList.add('animate-shake');
@@ -738,6 +1093,8 @@ function submitPhrase() {
         return;
     }
 
+    phraseSubmitted = true;
+    stopPhaseTimer();
     socket.emit('submit_text', { text: text });
     input.disabled = true;
     const submitBtn = document.getElementById('submit-phrase-btn');
@@ -746,25 +1103,36 @@ function submitPhrase() {
     if (statusSpan) statusSpan.innerHTML = '✅ Отправлено! Ожидание остальных...';
     triggerSuccessAnimation();
     playButtonSound();
+
 }
 
-function submitDrawing() {
+function submitDrawing(isAuto = false) {
     if (!canvas) return;
+    if (drawingSubmitted) return;
 
+    drawingSubmitted = true;
+    stopPhaseTimer();
     const imageData = canvas.toDataURL('image/png');
-    socket.emit('submit_drawing', { image: imageData });
+    socket.emit('submit_drawing', { image: imageData, auto: Boolean(isAuto) });
     const submitBtn = document.getElementById('submit-drawing-btn');
     if (submitBtn) submitBtn.disabled = true;
     const statusSpan = document.getElementById('drawing-status');
     if (statusSpan) statusSpan.innerHTML = '✅ Рисунок отправлен! Ожидание...';
     triggerSuccessAnimation();
     playButtonSound();
+
+    if (queuedPhaseChange) {
+        const nextPhase = queuedPhaseChange;
+        queuedPhaseChange = null;
+        applyPhaseChange(nextPhase);
+    }
 }
 
-function submitGuess() {
+function submitGuess(isAuto = false) {
     const input = document.getElementById('guess-input');
     if (!input) return;
-    const text = input.value.trim();
+    if (guessSubmitted) return;
+    const text = input.value.trim() || (isAuto ? 'Не успел' : '');
     if (!text) {
         showError('Введите описание рисунка! 👁️');
         input.classList.add('animate-shake');
@@ -772,6 +1140,8 @@ function submitGuess() {
         return;
     }
 
+    guessSubmitted = true;
+    stopPhaseTimer();
     socket.emit('submit_guess', { text: text });
     input.disabled = true;
     const submitBtn = document.getElementById('submit-guess-btn');
@@ -784,7 +1154,9 @@ function submitGuess() {
 
 function startGame() {
     if (isHost) {
-        socket.emit('host_start_game');
+        const timerInput = document.getElementById('timer-minutes-input');
+        const timerSeconds = timerInput ? Math.max(0, Math.min(Number(timerInput.value) || 0, 30)) * 60 : lobbyTimerSeconds;
+        socket.emit('host_start_game', { timer_seconds: timerSeconds });
         showSuccess('Игра начинается! 🚀');
         playButtonSound();
     }
@@ -792,7 +1164,7 @@ function startGame() {
 
 function nextBranch() {
     if (isHost) {
-        socket.emit('host_next_branch');
+        socket.emit('next_reveal_branch');
         playButtonSound();
     }
 }
@@ -845,6 +1217,9 @@ socket.on('error', (data) => {
 
 socket.on('lobby_update', (data) => {
     updateLobbyList(data);
+    updateLobbyTimerControls(data);
+    if (!hasJoinedGame) return;
+
     if (!currentPhase || currentPhase === 'lobby' || currentPhase === 'reveal') {
         if (currentPhase !== 'reveal') {
             showScreen('lobby-screen');
@@ -863,15 +1238,17 @@ socket.on('joined_mid_round', (data) => {
 });
 
 socket.on('join_success', (data) => {
+    hasJoinedGame = true;
     showScreen('lobby-screen');
     isHost = data.is_host;
     showSuccess(`Добро пожаловать! ${isHost ? 'Вы хост' : 'Вы игрок'}`);
 });
 
-socket.on('phase_change', (data) => {
+function applyPhaseChange(data) {
     currentPhase = data.phase;
 
     if (data.phase === 'reveal') {
+        stopPhaseTimer();
         revealedBranches = data.branches || [];
         totalBranches = data.branches?.length || 0;
         revealedBranchIndex = data.current_branch || 0;
@@ -880,14 +1257,30 @@ socket.on('phase_change', (data) => {
         updateRevealUI();
         triggerConfetti();
     } else if (data.phase === 'lobby') {
+        stopRevealProgression();
+        stopPhaseTimer();
         showScreen('lobby-screen');
         const lobbyTitle = document.getElementById('lobby-title');
         const lobbyText = document.getElementById('lobby-text');
-        if (lobbyTitle) lobbyTitle.innerHTML = '👋 Игра завершена';
-        if (lobbyText) lobbyText.innerHTML = data.message || 'Хост может запустить новый раунд';
+        if (lobbyTitle) lobbyTitle.innerHTML = 'Лобби';
+        if (lobbyText) lobbyText.innerHTML = data.message || 'Хост может запустить новую игру';
     } else {
+        stopRevealProgression();
         handleGamePhase(data);
     }
+}
+
+socket.on('phase_change', (data) => {
+    if (currentPhase === 'drawing' && !drawingSubmitted && data.phase !== 'drawing') {
+        queuedPhaseChange = data;
+        const drawingStatus = document.getElementById('drawing-status');
+        if (drawingStatus) {
+            drawingStatus.innerHTML = 'Игра обновилась. Закончите рисунок и нажмите отправку.';
+        }
+        return;
+    }
+
+    applyPhaseChange(data);
 });
 
 socket.on('reveal_update', (data) => {

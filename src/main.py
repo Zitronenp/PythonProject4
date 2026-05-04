@@ -60,6 +60,7 @@ class GameState:
         self.submitted: set[str] = set()
         self.reveal_branches: list[dict[str, Any]] = []
         self.reveal_index: int = 0
+        self.round_timer_seconds: int = 180
 
     def reset_to_lobby(self) -> None:
         self.phase = "lobby"
@@ -94,8 +95,21 @@ def _broadcast_lobby() -> None:
             for p in state.players.values()
         ],
         "host_sid": state.host_sid,
+        "timer_seconds": state.round_timer_seconds,
     }
-    socketio.emit("lobby_update", payload)
+    socketio.emit("lobby_update", payload, to=LOBBY_ROOM)
+
+
+def _return_to_lobby(message: str | None = None) -> None:
+    state.reset_to_lobby()
+    for player in state.players.values():
+        player.status = "waiting"
+    socketio.emit(
+        "phase_change",
+        {"phase": "lobby", "message": message or "Показ завершён. Хост может начать новую игру."},
+        to=LOBBY_ROOM,
+    )
+    _broadcast_lobby()
 
 
 def _all_submitted() -> bool:
@@ -122,7 +136,7 @@ def _start_round() -> None:
     for sid in state.current_round_players:
         state.players[sid].status = "waiting"
 
-    socketio.emit("phase_change", {"phase": "writing"})
+    socketio.emit("phase_change", {"phase": "writing", "timer_seconds": state.round_timer_seconds})
 
 
 def _prepare_next_phase() -> None:
@@ -149,7 +163,14 @@ def _prepare_next_phase() -> None:
         state.assignments[sid] = rotated[idx % len(rotated)]
 
     state.phase = "drawing" if state.round_index % 2 == 1 else "guessing"
-    socketio.emit("phase_change", {"phase": state.phase, "assignments": state.assignments})
+    socketio.emit(
+        "phase_change",
+        {
+            "phase": state.phase,
+            "assignments": state.assignments,
+            "timer_seconds": state.round_timer_seconds,
+        },
+    )
 
 
 def _start_reveal() -> None:
@@ -246,7 +267,7 @@ def on_join_game(data: dict[str, Any]) -> None:
 
 
 @socketio.on("host_start_game")
-def on_host_start_game() -> None:
+def on_host_start_game(data: dict[str, Any] | None = None) -> None:
     sid = request.sid
     with state.lock:
         if sid != state.host_sid:
@@ -255,7 +276,28 @@ def on_host_start_game() -> None:
         if len(state.players) < MIN_PLAYERS:
             _emit_error(f"Нужно минимум {MIN_PLAYERS} игрока!", sid)
             return
+        if data and "timer_seconds" in data:
+            try:
+                state.round_timer_seconds = max(0, min(int(data["timer_seconds"]), 1800))
+            except (TypeError, ValueError):
+                pass
         _start_round()
+
+
+@socketio.on("host_set_timer")
+def on_host_set_timer(data: dict[str, Any]) -> None:
+    sid = request.sid
+    with state.lock:
+        if sid != state.host_sid or state.phase != "lobby":
+            return
+        try:
+            timer_seconds = int((data or {}).get("timer_seconds", state.round_timer_seconds))
+        except (TypeError, ValueError):
+            _emit_error("Некорректное значение таймера.", sid)
+            return
+
+        state.round_timer_seconds = max(0, min(timer_seconds, 1800))
+        _broadcast_lobby()
 
 
 @socketio.on("submit_text")
@@ -328,6 +370,7 @@ def on_submit_guess(data: dict[str, Any]) -> None:
         _end_or_continue_after_submission()
 
 
+@socketio.on("host_next_branch")
 @socketio.on("next_reveal_branch")
 def on_next_reveal_branch() -> None:
     sid = request.sid
@@ -336,16 +379,7 @@ def on_next_reveal_branch() -> None:
             return
         state.reveal_index += 1
         if state.reveal_index >= len(state.reveal_branches):
-            socketio.emit(
-                "phase_change",
-                {
-                    "phase": "reveal",
-                    "branches": state.reveal_branches,
-                    "host_sid": state.host_sid,
-                    "current_branch": state.reveal_index,
-                    "done": True,
-                },
-            )
+            _return_to_lobby()
             return
 
         socketio.emit(
@@ -385,14 +419,12 @@ def on_disconnect() -> None:
             state.current_round_players = [p for p in state.current_round_players if p != sid]
 
         if len(state.players) < MIN_PLAYERS:
-            state.reset_to_lobby()
-            socketio.emit("phase_change", {"phase": "lobby", "message": "Недостаточно игроков."})
+            _return_to_lobby("Недостаточно игроков.")
         elif state.phase in {"writing", "drawing", "guessing"}:
             _end_or_continue_after_submission()
-
-        _broadcast_lobby()
+            _broadcast_lobby()
 
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
-    socketio.run(app, host="0.0.0.0", port=port, debug=False)
+    socketio.run(app, host="0.0.0.0", port=port, debug=False, allow_unsafe_werkzeug=True)

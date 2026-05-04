@@ -724,7 +724,8 @@ body {
 }
 
 /* Специальные кнопки для canvas */
-#eraser-btn.active {
+#eraser-btn.active,
+#fill-canvas-btn.active {
     background: linear-gradient(135deg, #ec4899, #db2777) !important;
     color: white !important;
     transform: scale(1.02);
@@ -777,8 +778,17 @@ body {
    ============================================ */
 .reveal-container {
     width: 100%;
-    max-width: 700px;
+    max-width: 1180px;
     text-align: center;
+    margin: 0 auto;
+}
+
+#reveal-screen {
+    max-width: 1280px;
+}
+
+#reveal-screen .card {
+    max-width: min(96vw, 1240px);
 }
 
 .reveal-branch-counter {
@@ -795,18 +805,18 @@ body {
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 5px;
-    margin: 20px 0;
-    max-height: 500px;
-    overflow-y: auto;
-    padding: 10px;
+    gap: 12px;
+    margin: 20px 0 8px;
+    max-height: none;
+    overflow: visible;
+    padding: 10px 0;
 }
 
 .reveal-step {
     background: linear-gradient(135deg, #1a0b2e 0%, #2d1547 100%);
     border-radius: var(--radius-md);
-    padding: 15px;
-    margin: 5px 0;
+    padding: 22px;
+    margin: 0;
     width: 100%;
     text-align: center;
     border: 1px solid var(--violet-600);
@@ -822,8 +832,8 @@ body {
 .reveal-step .nick {
     color: var(--pink-400);
     font-weight: bold;
-    font-size: 0.9em;
-    margin-bottom: 8px;
+    font-size: 1em;
+    margin-bottom: 12px;
     display: inline-block;
     padding: 4px 12px;
     background: #2d1547;
@@ -832,20 +842,29 @@ body {
 
 .reveal-step .content {
     margin-top: 8px;
-    font-size: 1.05em;
+    font-size: 1.18em;
 }
 
 .reveal-step .content img {
     max-width: 100%;
-    max-height: 250px;
+    max-height: 680px;
     border-radius: var(--radius-sm);
     box-shadow: var(--shadow-sm);
 }
 
+.reveal-step .content-text {
+    padding: 18px;
+    background: linear-gradient(135deg, #faf5ff, #fff);
+    border-radius: var(--radius-sm);
+    color: #1a0b2e;
+    font-size: 1.12em;
+    line-height: 1.45;
+}
+
 .reveal-arrow {
-    font-size: 1.8em;
+    font-size: 2.1em;
     color: var(--pink-400);
-    margin: 5px 0;
+    margin: 2px 0;
     animation: bounce 1s infinite;
 }
 
@@ -871,6 +890,52 @@ body {
     justify-content: center;
     flex-wrap: wrap;
     margin-top: 15px;
+}
+
+.timer-settings {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    padding: 12px;
+    background: rgba(26, 11, 46, 0.72);
+    border: 1px solid var(--violet-600);
+    border-radius: var(--radius-md);
+}
+
+.timer-label,
+.timer-unit {
+    color: var(--violet-200);
+    font-weight: 700;
+}
+
+.timer-control-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.timer-input {
+    width: 88px;
+    min-height: 42px;
+    padding: 8px 10px;
+}
+
+.phase-timer {
+    align-self: center;
+    justify-content: center;
+    min-width: 112px;
+    padding: 8px 14px;
+    color: #ffffff;
+    background: linear-gradient(135deg, var(--violet-600), var(--pink-500));
+    border-radius: var(--radius-xl);
+    font-weight: 800;
+    box-shadow: var(--shadow-sm);
+}
+
+.phase-timer.timer-warning {
+    background: linear-gradient(135deg, #ef4444, #f97316);
+    animation: pulse 0.8s infinite;
 }
 
 /* ============================================
@@ -1030,5 +1095,189 @@ body {
     .brush-btn {
         padding: 6px 12px;
         font-size: 0.8em;
+    }
+}
+
+/* ============================================
+   DRAWING DESK LAYOUT
+   ============================================ */
+#drawing-screen {
+    max-width: 1600px;
+}
+
+#drawing-screen .card {
+    max-width: min(96vw, 1540px);
+    padding: 22px;
+}
+
+#drawing-screen .card-body {
+    gap: 12px;
+}
+
+.drawing-layout {
+    display: grid;
+    grid-template-columns: 150px minmax(620px, 1fr) 180px;
+    gap: 12px;
+    align-items: stretch;
+    width: 100%;
+}
+
+.drawing-main {
+    min-width: 0;
+}
+
+.drawing-side {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-width: 0;
+    padding: 10px;
+    background: rgba(26, 11, 46, 0.7);
+    border: 1px solid var(--violet-600);
+    border-radius: var(--radius-sm);
+}
+
+.side-title {
+    color: var(--violet-200);
+    font-size: 0.78em;
+    font-weight: 700;
+    text-align: center;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+
+.tool-panel {
+    display: grid;
+    gap: 8px;
+}
+
+.tool-action-btn {
+    width: 100%;
+    min-height: 46px;
+    padding: 10px 8px;
+    border-radius: var(--radius-sm);
+    font-size: 0.86em;
+    line-height: 1.15;
+}
+
+.drawing-colors .palette {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(34px, 1fr));
+    gap: 8px;
+    align-content: start;
+}
+
+#drawing-screen .color-btn {
+    width: 100%;
+    height: auto;
+    aspect-ratio: 1;
+}
+
+.drawing-colors .color-picker-wrapper {
+    grid-column: 1 / -1;
+}
+
+#drawing-screen .canvas-container {
+    height: 100%;
+    padding: 8px;
+}
+
+#drawing-screen #draw-canvas {
+    width: 100%;
+    max-width: 1200px;
+    aspect-ratio: 5 / 3;
+}
+
+.drawing-bottom-bar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 12px;
+    align-items: stretch;
+    width: 100%;
+}
+
+#drawing-screen .brush-controls {
+    margin: 0;
+    grid-template-columns: repeat(2, minmax(220px, 1fr));
+}
+
+#drawing-screen .slider-section {
+    padding: 10px 12px;
+}
+
+.drawing-submit-group {
+    align-items: stretch;
+    margin-top: 0;
+}
+
+.drawing-submit-group .btn {
+    min-width: 220px;
+    height: 100%;
+}
+
+@media (max-width: 1100px) {
+    .drawing-layout {
+        grid-template-columns: 1fr;
+    }
+
+    .drawing-side {
+        flex-direction: row;
+        align-items: center;
+    }
+
+    .side-title {
+        min-width: 110px;
+        text-align: left;
+    }
+
+    .tool-panel {
+        flex: 1;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+
+    .drawing-colors .palette {
+        flex: 1;
+        grid-template-columns: repeat(7, minmax(30px, 1fr));
+    }
+
+    .drawing-colors .color-picker-wrapper {
+        grid-column: auto;
+    }
+
+    .drawing-bottom-bar {
+        grid-template-columns: 1fr;
+    }
+
+    .drawing-submit-group .btn {
+        width: 100%;
+        min-height: 52px;
+    }
+}
+
+@media (max-width: 640px) {
+    #drawing-screen .card {
+        padding: 12px;
+    }
+
+    .drawing-side {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .side-title {
+        min-width: 0;
+        text-align: center;
+    }
+
+    .tool-panel {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .drawing-colors .palette {
+        grid-template-columns: repeat(5, minmax(28px, 1fr));
+    }
+
+    #drawing-screen .brush-controls {
+        grid-template-columns: 1fr;
     }
 }
