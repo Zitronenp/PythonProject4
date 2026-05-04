@@ -1,0 +1,26 @@
+<div id="drawing-screen" class="screen">
+    <div class="card animate-slide-up">
+        <div class="card-body">
+            <div class="prompt-box" id="drawing-prompt"></div>
+            <div class="palette" id="palette"></div>
+            <div class="brush-controls" id="brush-controls">
+                <div class="slider-section">
+                    <label class="slider-label" for="brush-size-slider">🖌️ Размер кисти: <span id="brush-size-value">4</span>px</label>
+                    <input id="brush-size-slider" class="slider" type="range" min="1" max="40" value="4">
+                </div>
+                <div class="slider-section">
+                    <label class="slider-label" for="brush-opacity-slider">🌫️ Прозрачность: <span id="brush-opacity-value">100</span>%</label>
+                    <input id="brush-opacity-slider" class="slider" type="range" min="1" max="100" value="100">
+                </div>
+            </div>
+            <div class="canvas-container">
+                <canvas id="draw-canvas" width="800" height="500"></canvas>
+            </div>
+            <div class="button-group">
+                <button class="btn btn-secondary" onclick="window.clearCanvas?.()">🗑️ Очистить</button>
+                <button id="submit-drawing-btn" class="btn btn-primary" onclick="window.submitDrawing?.()">🎨 Отправить рисунок</button>
+            </div>
+            <p id="drawing-status" class="status-text"></p>
+        </div>
+    </div>
+</div>

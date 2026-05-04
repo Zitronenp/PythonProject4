@@ -1,0 +1,19 @@
+<div id="reveal-screen" class="screen">
+    <div class="card animate-slide-up">
+        <div class="card-header">
+            <div class="reveal-icon">🎭</div>
+            <h2>Результаты</h2>
+        </div>
+        <div class="card-body">
+            <div class="reveal-container">
+                <div class="reveal-branch-counter" id="branch-counter"></div>
+                <div class="reveal-steps" id="reveal-steps"></div>
+                <div class="button-group">
+                    <button id="next-branch-btn" class="btn btn-primary" onclick="window.nextBranch?.()" style="display:none;">Продолжить →</button>
+                    <button id="new-game-btn" class="btn btn-success" onclick="window.newGame?.()" style="display:none;">🔄 Новая игра</button>
+                    <p id="spectator-wait" class="waiting-text" style="display:none;">⏳ Ожидание хоста...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>

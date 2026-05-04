@@ -1,151 +1,17 @@
 <!DOCTYPE html>
 <html lang="ru">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>🎨 Испорченный телефончик | Волшебная версия</title>
-
-    <!-- Подключение CSS -->
-    <link rel="stylesheet" href="/static/style.css">
-    <link rel="stylesheet" href="/static/animations.css">
-
-    <!-- Шрифты Google Fonts -->
-    <link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@400;500;600;700&display=swap" rel="stylesheet">
-
-    <!-- Библиотеки -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.4/socket.io.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1"></script>
-</head>
+{% include "partials/head.html" %}
 <body>
-    <!-- Анимированный фон -->
-    <div class="animated-bg">
-        <div class="floating-shape shape-1"></div>
-        <div class="floating-shape shape-2"></div>
-        <div class="floating-shape shape-3"></div>
-        <div class="floating-shape shape-4"></div>
-    </div>
+    {% include "partials/background.html" %}
+    {% include "partials/toasts.html" %}
 
-    <!-- Тосты для уведомлений -->
-    <div id="error-toast" class="toast toast-error">
-        <span class="toast-icon">⚠️</span>
-        <span class="toast-message"></span>
-    </div>
-    <div id="success-toast" class="toast toast-success">
-        <span class="toast-icon">✅</span>
-        <span class="toast-message"></span>
-    </div>
+    {% include "screens/login.html" %}
+    {% include "screens/lobby.html" %}
+    {% include "screens/writing.html" %}
+    {% include "screens/drawing.html" %}
+    {% include "screens/guessing.html" %}
+    {% include "screens/reveal.html" %}
 
-    <!-- ЭКРАН ВХОДА -->
-    <div id="login-screen" class="screen active">
-        <div class="card card-glow animate-slide-up">
-            <div class="card-header">
-                <div class="emoji-bounce">🎨</div>
-                <h1>Испорченный телефончик</h1>
-                <p class="subtitle">Нарисуй, угадай, рассмейся!</p>
-            </div>
-            <div class="card-body">
-                <input type="text" id="nickname-input" class="input-styled" placeholder="Введите никнейм" maxlength="20" autocomplete="off">
-                <button id="join-btn" class="btn btn-primary btn-pulse" onclick="window.joinGame?.()">✨ Войти в игру ✨</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- ЭКРАН ЛОББИ -->
-    <div id="lobby-screen" class="screen">
-        <div class="card animate-slide-up">
-            <div class="card-header">
-                <h2 id="lobby-title">👋 Лобби</h2>
-            </div>
-            <div class="card-body">
-                <p id="lobby-text" class="waiting-text">Хост может начать игру, когда наберётся ≥2 игроков</p>
-                <ul id="player-list" class="player-list"></ul>
-                <button id="start-btn" class="btn btn-success btn-bounce" onclick="window.startGame?.()" style="display:none;">🚀 Начать игру</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- ЭКРАН ПИСЬМА -->
-    <div id="writing-screen" class="screen">
-        <div class="card animate-slide-up">
-            <div class="card-header">
-                <div class="typewriter-icon">✍️</div>
-                <h2>Напишите фразу</h2>
-            </div>
-            <div class="card-body">
-                <p class="hint-text">Придумайте любую фразу, которую другие будут рисовать</p>
-                <input type="text" class="input-styled input-glow" id="phrase-input" placeholder="Введите фразу..." maxlength="100" autocomplete="off">
-                <button id="submit-phrase-btn" class="btn btn-primary" onclick="window.submitPhrase?.()">📤 Отправить</button>
-                <p id="writing-status" class="status-text"></p>
-            </div>
-        </div>
-    </div>
-
-    <!-- ЭКРАН РИСОВАНИЯ -->
-    <div id="drawing-screen" class="screen">
-            <div class="card-body">
-                <div class="prompt-box" id="drawing-prompt"></div>
-                <div class="palette" id="palette"></div>
-                <div class="brush-controls" id="brush-controls">
-                    <div class="slider-section">
-                        <label class="slider-label" for="brush-size-slider">🖌️ Размер кисти: <span id="brush-size-value">4</span>px</label>
-                        <input id="brush-size-slider" class="slider" type="range" min="1" max="40" value="4">
-                    </div>
-                    <div class="slider-section">
-                        <label class="slider-label" for="brush-opacity-slider">🌫️ Прозрачность: <span id="brush-opacity-value">100</span>%</label>
-                        <input id="brush-opacity-slider" class="slider" type="range" min="1" max="100" value="100">
-                    </div>
-                </div>
-                <div class="canvas-container">
-                    <canvas id="draw-canvas" width="800" height="500"></canvas>
-                </div>
-                <div class="button-group">
-                    <button class="btn btn-secondary" onclick="window.clearCanvas?.()">🗑️ Очистить</button>
-                    <button id="submit-drawing-btn" class="btn btn-primary" onclick="window.submitDrawing?.()">🎨 Отправить рисунок</button>
-                </div>
-                <p id="drawing-status" class="status-text"></p>
-            </div>
-        </div>
-    </div>
-
-    <!-- ЭКРАН УГАДЫВАНИЯ -->
-    <div id="guessing-screen" class="screen">
-        <div class="card animate-slide-up">
-            <div class="card-header">
-                <div class="guess-icon">👁️</div>
-                <h2>Что изображено?</h2>
-            </div>
-            <div class="card-body">
-                <p class="hint-text">Опишите, что вы видите на рисунке</p>
-                <img id="guess-image" class="image-display" src="" alt="Рисунок">
-                <input type="text" class="input-styled" id="guess-input" placeholder="Ваш ответ..." maxlength="100" autocomplete="off">
-                <button id="submit-guess-btn" class="btn btn-primary" onclick="window.submitGuess?.()">💭 Отправить</button>
-                <p id="guessing-status" class="status-text"></p>
-            </div>
-        </div>
-    </div>
-
-    <!-- ЭКРАН РЕЗУЛЬТАТОВ -->
-    <div id="reveal-screen" class="screen">
-        <div class="card animate-slide-up">
-            <div class="card-header">
-                <div class="reveal-icon">🎭</div>
-                <h2>Результаты</h2>
-            </div>
-            <div class="card-body">
-                <div class="reveal-container">
-                    <div class="reveal-branch-counter" id="branch-counter"></div>
-                    <div class="reveal-steps" id="reveal-steps"></div>
-                    <div class="button-group">
-                        <button id="next-branch-btn" class="btn btn-primary" onclick="window.nextBranch?.()" style="display:none;">Продолжить →</button>
-                        <button id="new-game-btn" class="btn btn-success" onclick="window.newGame?.()" style="display:none;">🔄 Новая игра</button>
-                        <p id="spectator-wait" class="waiting-text" style="display:none;">⏳ Ожидание хоста...</p>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Подключение JS -->
     <script src="/static/script.js"></script>
 </body>
 </html>

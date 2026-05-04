@@ -1,0 +1,15 @@
+<div id="guessing-screen" class="screen">
+    <div class="card animate-slide-up">
+        <div class="card-header">
+            <div class="guess-icon">👁️</div>
+            <h2>Что изображено?</h2>
+        </div>
+        <div class="card-body">
+            <p class="hint-text">Опишите, что вы видите на рисунке</p>
+            <img id="guess-image" class="image-display" src="" alt="Рисунок">
+            <input type="text" class="input-styled" id="guess-input" placeholder="Ваш ответ..." maxlength="100" autocomplete="off">
+            <button id="submit-guess-btn" class="btn btn-primary" onclick="window.submitGuess?.()">💭 Отправить</button>
+            <p id="guessing-status" class="status-text"></p>
+        </div>
+    </div>
+</div>
