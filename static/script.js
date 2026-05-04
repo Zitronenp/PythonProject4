@@ -23,7 +23,9 @@ const CONFIG = {
         '#FFC0CB', '#800080'              // Pink, Purple
     ],
     DEFAULT_BRUSH_SIZE: 4,
-    DEFAULT_OPACITY: 100
+    DEFAULT_OPACITY: 100,
+    MIN_BRUSH_SIZE: 1,
+    MAX_BRUSH_SIZE: 40
 };
 
 // ────────────────────────────────────────────
@@ -361,18 +363,31 @@ function animateCanvasContainer(animationClass) {
     }
 }
 
-// Draw stroke with opacity
+// Draw a continuous stroke with opacity
+function startStroke(x, y) {
+    if (!ctx) return;
+
+    drawing = true;
+    [lastX, lastY] = [x, y];
+    ctx.beginPath();
+    ctx.globalAlpha = isErasing ? 1 : currentOpacity;
+    ctx.strokeStyle = isErasing ? '#FFFFFF' : currentColor;
+    ctx.moveTo(lastX, lastY);
+}
+
 function drawStroke(x, y) {
     if (!drawing || !ctx) return;
 
-    ctx.globalAlpha = isErasing ? 1 : currentOpacity;
-    ctx.strokeStyle = isErasing ? '#FFFFFF' : currentColor;
-    ctx.beginPath();
-    ctx.moveTo(lastX, lastY);
     ctx.lineTo(x, y);
     ctx.stroke();
-    ctx.globalAlpha = 1; // Reset alpha
     [lastX, lastY] = [x, y];
+}
+
+function endStroke() {
+    if (!ctx) return;
+    drawing = false;
+    ctx.closePath();
+    ctx.globalAlpha = 1;
 }
 
 // Fill canvas with current color
@@ -612,31 +627,43 @@ function initCanvas() {
     saveToUndo();
 
     renderColorPalette();
-    renderBrushSizes();
+    setupBrushSliders();
     addEraserButton();
     addUndoRedoButtons();
 
     setupCanvasEvents();
 }
 
-function renderBrushSizes() {
-    const brushDiv = document.getElementById('brush-sizes');
-    if (!brushDiv) return;
-    
-    brushDiv.innerHTML = '';
-    CONFIG.BRUSH_SIZES.forEach(size => {
-        const btn = document.createElement('button');
-        btn.className = 'brush-btn';
-        if (size === currentSize) btn.classList.add('active');
-        btn.textContent = size + 'px';
-        btn.onclick = () => {
-            currentSize = size;
-            document.querySelectorAll('.brush-btn').forEach(b => b.classList.remove('active'));
-            btn.classList.add('active');
+function setupBrushSliders() {
+    const sizeSlider = document.getElementById('brush-size-slider');
+    const sizeValue = document.getElementById('brush-size-value');
+    const opacitySlider = document.getElementById('brush-opacity-slider');
+    const opacityValue = document.getElementById('brush-opacity-value');
+
+    if (sizeSlider && sizeValue) {
+        sizeSlider.min = String(CONFIG.MIN_BRUSH_SIZE);
+        sizeSlider.max = String(CONFIG.MAX_BRUSH_SIZE);
+        sizeSlider.value = String(currentSize);
+        sizeValue.textContent = String(currentSize);
+
+        sizeSlider.oninput = (event) => {
+            currentSize = Number(event.target.value);
+            sizeValue.textContent = String(currentSize);
             if (ctx) ctx.lineWidth = currentSize;
         };
-        brushDiv.appendChild(btn);
-    });
+    }
+
+    if (opacitySlider && opacityValue) {
+        const opacityPercent = Math.round(currentOpacity * 100);
+        opacitySlider.value = String(opacityPercent);
+        opacityValue.textContent = String(opacityPercent);
+
+        opacitySlider.oninput = (event) => {
+            const value = Number(event.target.value);
+            currentOpacity = value / 100;
+            opacityValue.textContent = String(value);
+        };
+    }
 }
 
 function setupCanvasEvents() {
@@ -658,18 +685,16 @@ function setupCanvasEvents() {
 
     // Mouse events
     canvas.onmousedown = (e) => {
-        drawing = true;
-        [lastX, lastY] = getCoords(e.clientX, e.clientY);
-        ctx.beginPath();
-        ctx.moveTo(lastX, lastY);
+        const [x, y] = getCoords(e.clientX, e.clientY);
+        startStroke(x, y);
 
         if (undoStack.length === 0 || !isSameAsLastState()) {
             saveToUndo();
         }
     };
 
-    canvas.onmouseup = () => { drawing = false; };
-    canvas.onmouseout = () => { drawing = false; };
+    canvas.onmouseup = () => { endStroke(); };
+    canvas.onmouseout = () => { endStroke(); };
     canvas.onmousemove = (e) => {
         if (drawing) {
             const [x, y] = getCoords(e.clientX, e.clientY);
@@ -681,16 +706,14 @@ function setupCanvasEvents() {
     canvas.ontouchstart = (e) => {
         e.preventDefault();
         const touch = e.touches[0];
-        drawing = true;
-        [lastX, lastY] = getCoords(touch.clientX, touch.clientY);
-        ctx.beginPath();
-        ctx.moveTo(lastX, lastY);
+        const [x, y] = getCoords(touch.clientX, touch.clientY);
+        startStroke(x, y);
 
         if (undoStack.length === 0 || !isSameAsLastState()) {
             saveToUndo();
         }
     };
-    canvas.ontouchend = () => { drawing = false; };
+    canvas.ontouchend = () => { endStroke(); };
     canvas.ontouchmove = (e) => {
         e.preventDefault();
         if (drawing) {

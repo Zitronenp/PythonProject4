@@ -90,7 +90,16 @@
             <div class="card-body">
                 <div class="prompt-box" id="drawing-prompt"></div>
                 <div class="palette" id="palette"></div>
-                <div class="brush-sizes" id="brush-sizes"></div>
+                <div class="brush-controls" id="brush-controls">
+                    <div class="slider-section">
+                        <label class="slider-label" for="brush-size-slider">🖌️ Размер кисти: <span id="brush-size-value">4</span>px</label>
+                        <input id="brush-size-slider" class="slider" type="range" min="1" max="40" value="4">
+                    </div>
+                    <div class="slider-section">
+                        <label class="slider-label" for="brush-opacity-slider">🌫️ Прозрачность: <span id="brush-opacity-value">100</span>%</label>
+                        <input id="brush-opacity-slider" class="slider" type="range" min="1" max="100" value="100">
+                    </div>
+                </div>
                 <div class="canvas-container">
                     <canvas id="draw-canvas" width="800" height="500"></canvas>
                 </div>
