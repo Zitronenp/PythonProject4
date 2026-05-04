@@ -661,6 +661,14 @@ body {
     border: 2px solid var(--violet-400);
 }
 
+
+.brush-controls {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 10px;
+    margin: 12px 0;
+}
+
 /* Sliders */
 .slider-section {
     background: var(--violet-800);
